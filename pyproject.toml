@@ -1,0 +1,15 @@
+[project]
+name = "logstash-input-elasticsearch-compat"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+# Python CLI tools used while developing this repo. Installed into .venv by `uv sync`.
+[dependency-groups]
+dev = [
+    "specify-cli==1.3.1",
+]
+
+[tool.uv]
+package = false                      # not a Python package; uv only manages the env
+python-preference = "only-managed"   # always use uv-downloaded Python, never the system one

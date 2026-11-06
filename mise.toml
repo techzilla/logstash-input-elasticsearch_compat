@@ -1,0 +1,21 @@
+[tools]
+bun = "1.4.4"
+uv = "0.13.7"
+
+[settings]
+# Activate uv's .venv (put .venv/bin on PATH) when uv.lock is present.
+# uv owns the venv: it is created and populated only by `uv sync`.
+python.uv_venv_auto = true
+
+[env]
+_.path = ["{{ config_root }}/.mise/bin", "{{ config_root }}/node_modules/.bin"]
+
+[hooks]
+# Keep .venv in sync with uv.lock whenever you cd into the project
+# (no-op when already up to date). Requires `mise activate` in your shell.
+enter = "uv sync --quiet"
+# npm-distributed CLIs (e.g. wmill) ship `#!/usr/bin/env node` shebangs.
+# Bun supports being invoked as `node` (argv[0]-based compat mode), so
+# alias it instead of installing a second runtime. Then bootstrap the
+# Python env so `mise install` alone sets up a fresh clone.
+postinstall = "mkdir -p .mise/bin && ln -sf \"$(mise where bun)/bin/bun\" .mise/bin/node && uv sync"
