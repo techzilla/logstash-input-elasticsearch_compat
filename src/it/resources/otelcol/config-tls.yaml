@@ -1,0 +1,29 @@
+# otelcol-contrib 0.165.0 → elasticsearch_compat over TLS, exporter defaults otherwise.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  elasticsearch:
+    endpoint: ${env:ES_ENDPOINT}
+    tls:
+      ca_file: /etc/otelcol-contrib/ca.crt
+
+service:
+  telemetry:
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [elasticsearch]

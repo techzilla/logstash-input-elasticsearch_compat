@@ -154,6 +154,18 @@ class BulkParserTest {
         assertEquals(5L, nested.get("@timestamp"));
     }
 
+    @Test
+    void defaultIndexOnlyWhenActionOmitsIndex() throws Exception {
+        final byte[] b = ("{\"index\":{}}\n{}\n{\"index\":{\"_index\":\"own\"}}\n{}\n"
+            + "{\"create\":{\"_index\":\"\"}}\n{}\n").getBytes(StandardCharsets.UTF_8);
+        final List<Operation> ops = parser.parse(b, 0, b.length, "url-idx");
+        assertEquals("url-idx", ops.get(0).getIndex());
+        assertEquals("own", ops.get(1).getIndex());
+        assertEquals("url-idx", ops.get(2).getIndex());
+        assertTrue(ops.stream().allMatch(Operation::isSubmittable));
+        assertEquals(ItemOutcome.MISSING_INDEX, parser.parse(b, 0, b.length, null).get(0).getPreStatus());
+    }
+
     // ---- failure paths (US2, T033) ----
 
     @Test

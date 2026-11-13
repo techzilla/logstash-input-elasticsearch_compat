@@ -1,8 +1,9 @@
 # encoding: utf-8
 # SC-007 inside Logstash's own Ruby (T048b). Per request size, prints:
 #   ruby:     event building only — Event.new(java Map) + event.set(metadata) + tag/add_field
-#   combined: the whole plugin-added path for one request — parse + event building + response
-#             write (everything except Netty I/O and waiting on the queue)
+#   combined: the whole plugin-added path for one request — gzip decode of the request (level 1,
+#             as the exporter sends) + parse + event building + response write + level-3 gzip of
+#             the response (everything except Netty/TLS I/O and waiting on the queue)
 # Usage: LS_HOME/bin/ruby -I logstash-core/lib event_build_bench.rb <plugin.jar> <bodies dir>
 require "logstash-core/logstash-core"
 require "java"
@@ -24,6 +25,24 @@ def percentile(sorted, p)
   sorted[[(sorted.size * p).ceil - 1, 0].max]
 end
 
+def gzip(bytes, level)
+  bos = java.io.ByteArrayOutputStream.new
+  deflater = java.util.zip.Deflater.new(level, true)
+  crc = java.util.zip.CRC32.new
+  crc.update(bytes)
+  bos.write([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff].pack("C*").to_java_bytes)
+  dos = java.util.zip.DeflaterOutputStream.new(bos, deflater)
+  dos.write(bytes)
+  dos.finish
+  trailer = [crc.value & 0xffffffff, bytes.length & 0xffffffff].pack("VV")
+  bos.write(trailer.to_java_bytes)
+  bos.to_byte_array
+end
+
+def gunzip(bytes)
+  java.util.zip.GZIPInputStream.new(java.io.ByteArrayInputStream.new(bytes)).read_all_bytes
+end
+
 def build_events(ops)
   n = ops.size
   i = 0
@@ -40,6 +59,7 @@ end
 [1000, 5000, 10000].each do |items|
   body = (0...items).map { |i| pair = (i % (lines.size / 2)) * 2; "#{lines[pair]}\n#{lines[pair + 1]}\n" }.join
   bytes = body.to_java_bytes
+  compressed = gzip(bytes, 1)
   ruby = []
   combined = []
   iterations = items == 1000 ? 300 : 60
@@ -50,11 +70,16 @@ end
     ruby << (java.lang.System.nano_time - t0) / 1e6 if iter >= 30
 
     t1 = java.lang.System.nano_time
-    ops2 = parser.parse(bytes, 0, bytes.length)
+    decoded = gunzip(compressed)
+    ops2 = parser.parse(decoded, 0, decoded.length)
     build_events(ops2)
     outcomes = BULK::ItemOutcome[ops2.size].new
     java.util.Arrays.fill(outcomes, queued)
-    writer.write(ops2, outcomes, 1, filter, alloc).release
+    response = writer.write(ops2, outcomes, 1, filter, alloc)
+    response_bytes = Java::byte[response.readable_bytes].new
+    response.read_bytes(response_bytes)
+    response.release
+    gzip(response_bytes, 3)
     combined << (java.lang.System.nano_time - t1) / 1e6 if iter >= 30
   end
   r = ruby.sort

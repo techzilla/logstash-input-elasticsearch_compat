@@ -102,8 +102,11 @@
                   <include>com.fasterxml.jackson.core:jackson-core</include>
                 </includes>
                 <excludes>
-                  <!-- NIO only; native transports cannot be relocated safely -->
-                  <exclude>io.netty:netty-transport-native-*</exclude>
+                  <!-- NIO only; native transports (epoll/kqueue/io_uring) cannot be relocated safely.
+                       netty-transport-native-unix-common is plain Java and SslHandler needs it. -->
+                  <exclude>io.netty:netty-transport-native-epoll</exclude>
+                  <exclude>io.netty:netty-transport-native-kqueue</exclude>
+                  <exclude>io.netty:netty-transport-native-io_uring</exclude>
                   <exclude>io.netty:netty-resolver-dns-native-*</exclude>
                 </excludes>
               </artifactSet>
@@ -127,9 +130,22 @@
                     <exclude>META-INF/versions/**</exclude>
                     <exclude>META-INF/native-image/**</exclude>
                     <exclude>module-info.class</exclude>
+                    <!-- replaced by the project's LICENSE and NOTICE.TXT, which include every bundled notice -->
+                    <exclude>META-INF/LICENSE*</exclude>
+                    <exclude>META-INF/NOTICE*</exclude>
                   </excludes>
                 </filter>
               </filters>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                  <resource>META-INF/LICENSE</resource>
+                  <file>${project.basedir}/LICENSE</file>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                  <resource>META-INF/NOTICE</resource>
+                  <file>${project.basedir}/NOTICE.TXT</file>
+                </transformer>
+              </transformers>
             </configuration>
           </execution>
         </executions>

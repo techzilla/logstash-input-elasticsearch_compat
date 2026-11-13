@@ -16,9 +16,11 @@ module LogStash
       # @param sink [#call] called with (document, metadata); builds and queues one event.
       #   Raising means the outcome is unknown.
       # @param logger [#error]
-      def initialize(sink, logger)
+      # @param after_submit [#call, nil] called once after each request's submission (metrics)
+      def initialize(sink, logger, after_submit = nil)
         @sink = sink
         @logger = logger
+        @after_submit = after_submit
         @stopping = java.util.concurrent.atomic.AtomicBoolean.new(false)
       end
 
@@ -28,6 +30,18 @@ module LogStash
       end
 
       def submit(ops, results)
+        submit_all(ops, results)
+      ensure
+        begin
+          @after_submit.call if @after_submit
+        rescue StandardError, java.lang.Exception
+          # metrics must never affect ingestion
+        end
+      end
+
+      private
+
+      def submit_all(ops, results)
         n = ops.size
         i = 0
         while i < n

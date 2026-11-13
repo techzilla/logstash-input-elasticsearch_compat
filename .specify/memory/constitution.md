@@ -47,10 +47,12 @@ in a client/version matrix; other clients are best-effort.
 
 ### VI. Accept Any Credentials, Enforce None
 
-- Never authenticate. Requests with no `Authorization` header or any scheme are processed alike;
-  never `401`/`403`.
+- Never authenticate requests. Requests with no `Authorization` header or any scheme are processed
+  alike; never `401`/`403`.
 - Drop the `Authorization` header before building events; never log, store, or echo credentials.
-- Support TLS. Do not log document bodies by default. Keep metrics low-cardinality.
+- Support TLS. Optional TLS client-certificate verification (off by default, as in
+  `logstash-input-http`) is transport security and is allowed.
+- Do not log document bodies by default. Keep metrics low-cardinality.
 
 ## Architecture Constraints
 
@@ -78,4 +80,4 @@ This constitution overrides conflicting practices and documents. Amend via `/spe
 committed separately from feature code. Versioning: MAJOR redefines or removes a principle, MINOR
 adds one or materially expands guidance, PATCH clarifies wording.
 
-**Version**: 1.0.0 | **Ratified**: 2026-11-11 | **Last Amended**: 2026-11-11
+**Version**: 1.1.0 | **Ratified**: 2026-11-11 | **Last Amended**: 2026-11-13

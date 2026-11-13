@@ -10,6 +10,7 @@ import io.netty.util.concurrent.DefaultThreadFactory;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.logstash.plugins.inputs.escompat.BatchHandler;
+import org.logstash.plugins.inputs.escompat.ServerConfig;
 import org.logstash.plugins.inputs.escompat.bulk.BulkParser;
 import org.logstash.plugins.inputs.escompat.response.BulkResponseWriter;
 
@@ -26,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class EsCompatServer implements AutoCloseable {
     private static final Logger LOGGER = LogManager.getLogger(EsCompatServer.class);
 
+    private final ServerConfig config;
     private final String host;
     private final int port;
     private final EventLoopGroup bossGroup;
@@ -35,18 +37,16 @@ public final class EsCompatServer implements AutoCloseable {
     private final AtomicBoolean closing = new AtomicBoolean(false);
     private volatile Channel serverChannel;
 
-    public EsCompatServer(final String name, final String host, final int port, final int threads,
-                          final int maxPendingRequests, final int maxContentLength,
-                          final BatchHandler batchHandler) {
-        if (threads < 1 || maxPendingRequests < 1 || maxContentLength < 1) {
-            throw new IllegalArgumentException("threads, max_pending_requests and max_content_length must be > 0");
-        }
-        this.host = host;
-        this.port = port;
+    public EsCompatServer(final ServerConfig config, final BatchHandler batchHandler) {
+        this.config = config;
+        this.host = config.host();
+        this.port = config.port();
+        final String name = config.name();
+        final int threads = config.threads();
         this.bossGroup = new NioEventLoopGroup(1, new DefaultThreadFactory(name + "-boss", true));
         this.ioGroup = new NioEventLoopGroup(threads, new DefaultThreadFactory(name + "-io", true));
         this.workers = new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
-            new ArrayBlockingQueue<>(maxPendingRequests), new DefaultThreadFactory(name + "-worker", true),
+            new ArrayBlockingQueue<>(config.maxPendingRequests()), new DefaultThreadFactory(name + "-worker", true),
             (task, executor) -> ((BulkRequestHandler.Task) task).reject());
         this.workers.prestartAllCoreThreads();
 
@@ -58,8 +58,12 @@ public final class EsCompatServer implements AutoCloseable {
             .option(ChannelOption.SO_BACKLOG, 1024)
             .childOption(ChannelOption.TCP_NODELAY, true)
             .childOption(ChannelOption.SO_KEEPALIVE, true)
-            .childHandler(new HttpInitializer(maxContentLength,
-                () -> new BulkRequestHandler(workers, batchHandler, parser, writer, closing::get)));
+            .childHandler(new HttpInitializer(config,
+                () -> new BulkRequestHandler(workers, batchHandler, parser, writer, closing::get, config.counters())));
+    }
+
+    public RequestCounters counters() {
+        return config.counters();
     }
 
     /** Binds and blocks until {@link #close()}. */

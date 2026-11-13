@@ -14,15 +14,18 @@ import io.netty.util.ReferenceCountUtil;
 /** {@link HttpObjectAggregator} whose 413 responses carry this plugin's headers (FR-012). */
 final class BoundedAggregator extends HttpObjectAggregator {
     private final int maxContentLength;
+    private final RequestCounters counters;
 
-    BoundedAggregator(final int maxContentLength) {
+    BoundedAggregator(final int maxContentLength, final RequestCounters counters) {
         super(maxContentLength, true); // close after a rejected Expect: 100-continue
         this.maxContentLength = maxContentLength;
+        this.counters = counters;
     }
 
     @Override
     protected void handleOversizedMessage(final ChannelHandlerContext ctx, final HttpMessage oversized) {
         if (oversized instanceof HttpRequest req) {
+            counters.rejectedTooLarge();
             Responses.send(ctx, req, tooLarge(ctx), true);
         } else {
             ctx.close();
@@ -36,6 +39,7 @@ final class BoundedAggregator extends HttpObjectAggregator {
         if (res instanceof FullHttpResponse full
             && full.status().code() == HttpResponseStatus.REQUEST_ENTITY_TOO_LARGE.code()) {
             ReferenceCountUtil.release(full);
+            counters.rejectedTooLarge();
             final FullHttpResponse ours = tooLarge(pipeline.firstContext());
             ours.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
             return ours;

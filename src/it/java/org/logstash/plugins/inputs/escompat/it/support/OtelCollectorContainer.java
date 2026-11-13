@@ -21,17 +21,30 @@ import java.util.regex.Pattern;
  */
 public final class OtelCollectorContainer extends GenericContainer<OtelCollectorContainer> {
     public static final String ALIAS = "otelcol";
+    private final StringBuffer logs = new StringBuffer();
+
+    /** All collector output so far. */
+    public String collectorLogs() {
+        return logs.toString();
+    }
 
     public OtelCollectorContainer(final Network network, final String esEndpoint) {
+        this(network, esEndpoint, "otelcol/config.yaml");
+    }
+
+    /** @param configResource classpath resource used as the collector config */
+    public OtelCollectorContainer(final Network network, final String esEndpoint, final String configResource) {
         super("otel/opentelemetry-collector-contrib:" + version());
         withNetwork(network);
         withNetworkAliases(ALIAS);
         withEnv("ES_ENDPOINT", esEndpoint);
-        withCopyFileToContainer(MountableFile.forClasspathResource("otelcol/config.yaml"),
+        withCopyFileToContainer(MountableFile.forClasspathResource(configResource),
             "/etc/otelcol-contrib/config.yaml");
+        withCopyFileToContainer(MountableFile.forClasspathResource("tls/ca.crt"), "/etc/otelcol-contrib/ca.crt");
         withExposedPorts(4317, 4318, 8888);
         withLogConsumer(frame -> {
             final String line = frame.getUtf8String();
+            logs.append(line);
             if (line.contains("\twarn\t") || line.contains("\terror\t")) {
                 System.out.print("[otelcol] " + line);
             }

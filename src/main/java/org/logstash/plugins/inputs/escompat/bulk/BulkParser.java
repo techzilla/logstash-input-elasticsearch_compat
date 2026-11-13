@@ -33,6 +33,14 @@ public final class BulkParser {
     }
 
     public List<Operation> parse(final ByteBuf body) throws BulkParseException {
+        return parse(body, null);
+    }
+
+    /**
+     * @param defaultIndex index from {@code /{index}/_bulk}, used only when an action omits
+     *                     {@code _index} (FR-008); {@code null} for {@code /_bulk}
+     */
+    public List<Operation> parse(final ByteBuf body, final String defaultIndex) throws BulkParseException {
         final byte[] data;
         final int start;
         final int len = body.readableBytes();
@@ -43,10 +51,15 @@ public final class BulkParser {
             data = ByteBufUtil.getBytes(body);
             start = 0;
         }
-        return parse(data, start, len);
+        return parse(data, start, len, defaultIndex);
     }
 
     public List<Operation> parse(final byte[] data, final int start, final int len)
+        throws BulkParseException {
+        return parse(data, start, len, null);
+    }
+
+    public List<Operation> parse(final byte[] data, final int start, final int len, final String defaultIndex)
         throws BulkParseException {
         final int end = start + len;
         if (len == 0 || isBlank(data, start, end)) {
@@ -88,7 +101,7 @@ public final class BulkParser {
                 }
                 pos = nl + 1;
             }
-            ops.add(toOperation(actionLine, document));
+            ops.add(toOperation(actionLine, document, defaultIndex));
         }
         if (ops.isEmpty()) {
             throw new BulkParseException("request body is required");
@@ -96,17 +109,19 @@ public final class BulkParser {
         return ops;
     }
 
-    private static Operation toOperation(final ActionLine a, final Map<String, Object> document) {
+    private static Operation toOperation(final ActionLine a, final Map<String, Object> document,
+                                         final String defaultIndex) {
+        final String index = a.index == null || a.index.isEmpty() ? defaultIndex : a.index;
         ItemOutcome pre = null;
         if (!a.action.producesEvent()) {
             pre = ItemOutcome.UNSUPPORTED_ACTION;
-        } else if (a.index == null || a.index.isEmpty()) {
+        } else if (index == null || index.isEmpty()) {
             pre = ItemOutcome.MISSING_INDEX;
         } else if (document.containsKey(METADATA_FIELD)
             && !(document.get(METADATA_FIELD) instanceof Map)) {
             pre = ItemOutcome.INVALID_DOCUMENT;
         }
-        return new Operation(a.action, a.index, a.id, a.routing, a.pipeline, document, pre);
+        return new Operation(a.action, index, a.id, a.routing, a.pipeline, document, pre);
     }
 
     private record ActionLine(Action action, String index, String id, String routing,

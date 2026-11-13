@@ -1,0 +1,28 @@
+# otelcol-contrib 0.165.0 → elasticsearch_compat with exporter DEFAULTS (feature 002 US1):
+# only the endpoint is set; gzip compression and version detection stay on.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  elasticsearch:
+    endpoint: ${env:ES_ENDPOINT}
+
+service:
+  telemetry:
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [elasticsearch]

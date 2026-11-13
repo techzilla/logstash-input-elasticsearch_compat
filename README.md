@@ -1,9 +1,9 @@
 # logstash-input-elasticsearch_compat
 
-A Logstash input that accepts Elasticsearch Bulk API requests (`POST /_bulk`) and emits one
-Logstash event per `index` or `create` action. Point a client that normally writes to
-Elasticsearch — tested with the OpenTelemetry Collector `elasticsearch` exporter — at Logstash
-instead.
+A Logstash input that accepts Elasticsearch Bulk API requests (`POST`/`PUT` on `/_bulk` and
+`/{index}/_bulk`) and emits one Logstash event per `index` or `create` action. Point a client that
+normally writes to Elasticsearch — tested with the OpenTelemetry Collector `elasticsearch` exporter
+with its default settings — at Logstash instead.
 
 This is a protocol-compatible receiver, **not** an Elasticsearch node.
 
@@ -31,8 +31,48 @@ input {
 | `max_pending_requests` | `200` | Requests waiting for a worker; beyond this, `429` |
 | `max_content_length` | `104857600` | Maximum body size in bytes; beyond this, `413` |
 | `metadata_target` | `"[@metadata][elasticsearch_compat]"` | Where routing metadata goes |
+| `compression_enabled` | `true` | Compress responses when the client accepts it (requests are always decoded) |
+| `ssl_*` | `ssl_enabled => false` | TLS; the same 14 settings, defaults and rules as `logstash-input-http` |
 
-Standard input options (`id`, `tags`, `add_field`, `type`) work as usual.
+Standard input options (`id`, `tags`, `add_field`, `type`, `enable_metric`) work as usual. Full
+reference: [docs/index.asciidoc](docs/index.asciidoc).
+
+## Routes
+
+- `POST`/`PUT` `/_bulk` and `/{index}/_bulk` (the URL index applies only to actions without
+  `_index`).
+- `GET /` and `HEAD /` return a minimal identity for client version detection. It reports version
+  `8.19.0`, a fixed compatibility placeholder that keeps the OTel exporter on its most widely
+  compatible metrics format.
+
+## Compression
+
+Like Elasticsearch: gzip and deflate request bodies are always accepted (`max_content_length`
+counts decompressed bytes); responses are compressed at level 3 whenever the client accepts it,
+unless `compression_enabled => false`. Other encodings get `415`.
+
+## TLS
+
+```ruby
+input {
+  elasticsearch_compat {
+    ssl_enabled => true
+    ssl_certificate => "/etc/logstash/certs/server.crt"
+    ssl_key => "/etc/logstash/certs/server.pkcs8.key"     # PKCS#8
+    # ssl_client_authentication => "required"
+    # ssl_certificate_authorities => ["/etc/logstash/certs/ca.crt"]
+  }
+}
+```
+
+Keystores, truststores, protocols, cipher suites and handshake timeout follow
+`logstash-input-http` exactly.
+
+## Monitoring
+
+Counters for this input appear in `GET :9600/_node/stats/pipelines/<id>`: `bulk_requests`,
+`bulk_requests_rejected_overload`/`_too_large`/`_unsupported_encoding`/`_bad_request`,
+`bulk_items_failed`, `queue_submit_failures`.
 
 ## Events
 
@@ -65,25 +105,21 @@ it. They never contain invented Elasticsearch fields (`_version`, `_seq_no`, `_s
 
 Credentials are **accepted and ignored**: requests with no `Authorization` header, Basic, ApiKey,
 or any other scheme are all processed the same way. The header is dropped before events are
-built and is never logged. Restrict access at the network or proxy layer.
+built and is never logged. Restrict access with TLS client certificates or at the network layer.
 
 ## Not yet supported
 
-TLS (next release; required before production use), compressed bodies (`415`), `GET /` and
-other endpoints (`404`), `PUT /_bulk` (`405`), `/{index}/_bulk`, and `filter_path` expressions
+Other Elasticsearch endpoints (`404`), Brotli/Zstd bodies (`415`), and `filter_path` expressions
 beyond `took`, `errors`, `items`, `items.*`, `items.*.<field>` (`400`).
 
 ## Client setup (OpenTelemetry Collector)
+
+Defaults work; only the endpoint is needed:
 
 ```yaml
 exporters:
   elasticsearch:
     endpoint: http://logstash:9200
-    version_detection:
-      enabled: false
-    compression: none
-    discover:
-      on_start: false
 ```
 
 Tested versions: [docs/compatibility.md](docs/compatibility.md).

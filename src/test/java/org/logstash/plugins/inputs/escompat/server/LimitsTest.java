@@ -50,17 +50,6 @@ class LimitsTest {
     }
 
     @Test
-    void gzipIs415AndNeverSubmitted() throws Exception {
-        final AtomicInteger calls = new AtomicInteger();
-        try (TestServer s = new TestServer((ops, r) -> calls.incrementAndGet())) {
-            final TestServer.Response r = s.post("/_bulk", ONE, "Content-Encoding: gzip");
-            assertEquals(415, r.status());
-            assertEquals("Elasticsearch", r.header("X-Elastic-Product"));
-        }
-        assertEquals(0, calls.get());
-    }
-
-    @Test
     void identityEncodingAllowed() throws Exception {
         try (TestServer s = new TestServer((ops, r) -> Arrays.fill(r, ItemOutcome.QUEUED))) {
             assertEquals(200, s.post("/_bulk", ONE, "Content-Encoding: identity").status());

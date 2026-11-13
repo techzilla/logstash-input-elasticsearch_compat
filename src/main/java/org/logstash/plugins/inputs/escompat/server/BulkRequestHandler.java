@@ -36,22 +36,24 @@ final class BulkRequestHandler extends SimpleChannelInboundHandler<FullHttpReque
     private final BulkParser parser;
     private final BulkResponseWriter writer;
     private final BooleanSupplier closing;
+    private final RequestCounters counters;
 
     BulkRequestHandler(final Executor executor, final BatchHandler batchHandler,
                        final BulkParser parser, final BulkResponseWriter writer,
-                       final BooleanSupplier closing) {
+                       final BooleanSupplier closing, final RequestCounters counters) {
         super(false); // ownership of the request passes to the task
         this.executor = executor;
         this.batchHandler = batchHandler;
         this.parser = parser;
         this.writer = writer;
         this.closing = closing;
+        this.counters = counters;
     }
 
     @Override
     protected void channelRead0(final ChannelHandlerContext ctx, final FullHttpRequest req) {
         req.headers().remove(HttpHeaderNames.AUTHORIZATION); // accepted, never enforced (FR-011)
-        final Task task = new Task(ctx, req);
+        final Task task = new Task(ctx, req, ctx.channel().attr(RoutingHandler.DEFAULT_INDEX).get());
         try {
             executor.execute(task);
         } catch (RejectedExecutionException e) {
@@ -59,20 +61,18 @@ final class BulkRequestHandler extends SimpleChannelInboundHandler<FullHttpReque
         }
     }
 
-    @Override
-    public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) {
-        LOGGER.debug("closing connection after error", cause);
-        ctx.close();
-    }
+    // exceptionCaught is not overridden: errors propagate to DecompressionErrorHandler (last stage).
 
     /** One request on a worker thread. */
     final class Task implements Runnable {
         private final ChannelHandlerContext ctx;
         private final FullHttpRequest req;
+        private final String defaultIndex;
 
-        Task(final ChannelHandlerContext ctx, final FullHttpRequest req) {
+        Task(final ChannelHandlerContext ctx, final FullHttpRequest req, final String defaultIndex) {
             this.ctx = ctx;
             this.req = req;
+            this.defaultIndex = defaultIndex;
         }
 
         /** Pending-request queue full (429) or shutting down (503); nothing was queued. */
@@ -82,6 +82,7 @@ final class BulkRequestHandler extends SimpleChannelInboundHandler<FullHttpReque
                     sendError(HttpResponseStatus.SERVICE_UNAVAILABLE, "unavailable_exception",
                         "receiver is shutting down");
                 } else {
+                    counters.rejectedOverload();
                     sendError(HttpResponseStatus.TOO_MANY_REQUESTS, "too_many_requests",
                         "pending request limit reached");
                 }
@@ -114,11 +115,13 @@ final class BulkRequestHandler extends SimpleChannelInboundHandler<FullHttpReque
             final List<Operation> ops;
             try {
                 filter = FilterPath.parse(filterPathParam());
-                ops = parser.parse(req.content());
+                ops = parser.parse(req.content(), defaultIndex);
             } catch (FilterPath.UnsupportedException e) {
+                counters.rejectedBadRequest();
                 sendError(HttpResponseStatus.BAD_REQUEST, "illegal_argument_exception", e.getMessage());
                 return;
             } catch (BulkParseException e) {
+                counters.rejectedBadRequest();
                 sendError(HttpResponseStatus.BAD_REQUEST, "parse_exception", e.getMessage());
                 return;
             }
@@ -149,6 +152,14 @@ final class BulkRequestHandler extends SimpleChannelInboundHandler<FullHttpReque
             for (int k = 0; k < results.length; k++) {
                 outcomes[positions[k]] = results[k] == null ? ItemOutcome.NOT_ATTEMPTED : results[k];
             }
+            long failed = 0;
+            long submitFailed = 0;
+            for (final ItemOutcome o : outcomes) {
+                if (o.status() >= 400) failed++;
+                if (o == ItemOutcome.SUBMIT_FAILED) submitFailed++;
+            }
+            counters.itemsFailed(failed);
+            counters.queueSubmitFailures(submitFailed);
 
             final long took = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
             final ByteBuf body = writer.write(ops, outcomes, took, filter, ctx.alloc());

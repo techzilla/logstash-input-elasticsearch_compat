@@ -62,6 +62,21 @@ public final class LogstashContainer extends GenericContainer<LogstashContainer>
             .withStartupTimeout(Duration.ofMinutes(4)));
     }
 
+    /** Mounts the TLS fixtures from the test classpath at {@code /usr/share/logstash/tls/}. */
+    public LogstashContainer withTlsFixtures() {
+        for (final String f : new String[] {"ca.crt", "server.crt", "server.key", "server.p12", "server.jks",
+            "truststore.jks"}) {
+            withCopyFileToContainer(MountableFile.forClasspathResource("tls/" + f, 0644), "/usr/share/logstash/tls/" + f);
+        }
+        return this;
+    }
+
+    /** Waits for the listening port instead of the plugin's log line (other inputs, failing configs). */
+    public LogstashContainer waitForPort(final int port) {
+        waitingFor(Wait.forListeningPorts(port).withStartupTimeout(Duration.ofMinutes(4)));
+        return this;
+    }
+
     /** Extra environment, e.g. {@code PIPELINE_WORKERS}. */
     public LogstashContainer env(final String key, final String value) {
         withEnv(key, value);
@@ -79,6 +94,10 @@ public final class LogstashContainer extends GenericContainer<LogstashContainer>
 
     public URI bulkUri(final int containerPort) {
         return URI.create("http://" + getHost() + ":" + getMappedPort(containerPort) + "/_bulk");
+    }
+
+    public URI uri(final String scheme, final int containerPort, final String path) {
+        return URI.create(scheme + "://" + getHost() + ":" + getMappedPort(containerPort) + path);
     }
 
     public URI statsUri() {

@@ -2,6 +2,7 @@ package org.logstash.plugins.inputs.escompat.server;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponseStatus;
@@ -10,15 +11,11 @@ import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.util.ReferenceCountUtil;
 
 /**
- * Rejects a request from its headers alone, before the body is aggregated. The rest of a rejected
+ * Answers a request from its headers alone, before the body is aggregated. The rest of an answered
  * request's body is discarded so keep-alive connections stay usable; bodies larger than
  * {@code maxDiscardBytes} close the connection instead.
  */
 abstract class EarlyRejectHandler extends ChannelInboundHandlerAdapter {
-
-    /** Why a request is rejected. */
-    record Rejection(HttpResponseStatus status, String type, String reason) {
-    }
 
     private final long maxDiscardBytes;
     private boolean discarding;
@@ -28,23 +25,27 @@ abstract class EarlyRejectHandler extends ChannelInboundHandlerAdapter {
         this.maxDiscardBytes = maxDiscardBytes;
     }
 
-    /** @return a rejection, or {@code null} to pass the request on */
-    abstract Rejection check(HttpRequest request);
+    /** @return a response to send now, or {@code null} to pass the request on */
+    abstract FullHttpResponse check(ChannelHandlerContext ctx, HttpRequest request);
+
+    static FullHttpResponse reject(final ChannelHandlerContext ctx, final HttpResponseStatus status,
+                                   final String type, final String reason) {
+        return Responses.error(ctx.alloc(), status, type, reason);
+    }
 
     @Override
     public void channelRead(final ChannelHandlerContext ctx, final Object msg) {
         if (msg instanceof HttpRequest req) {
             discarding = false;
-            final Rejection rejection = check(req);
-            if (rejection == null) {
+            final FullHttpResponse response = check(ctx, req);
+            if (response == null) {
                 ctx.fireChannelRead(msg);
                 return;
             }
             final boolean complete = msg instanceof LastHttpContent;
             ReferenceCountUtil.release(msg);
             final boolean tooBigToDrain = HttpUtil.getContentLength(req, -1L) > maxDiscardBytes;
-            Responses.send(ctx, req, Responses.error(ctx.alloc(), rejection.status(),
-                rejection.type(), rejection.reason()), tooBigToDrain);
+            Responses.send(ctx, req, response, tooBigToDrain);
             if (!complete && !tooBigToDrain) {
                 discarding = true;
                 discarded = 0;

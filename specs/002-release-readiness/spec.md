@@ -8,6 +8,20 @@
 
 **Input**: User description: "Release readiness for the elasticsearch_compat input. (1) The OTel Collector elasticsearch exporter works with its default settings: accept gzip and deflate request bodies (size limit applies after decompression), compress responses when the client accepts it, with a compression_enabled option (default true) to turn compression off; answer the exporter's version_detection GET / with a minimal, documented identity response. (2) Bulk routes: POST and PUT on both /_bulk and /{index}/_bulk; on /{index}/_bulk the URL index is used only when an action omits _index. (3) TLS with the same ssl_* settings, defaults, allowed values and validation rules as logstash-input-http (certificate/key, keystore, truststore, certificate authorities, client authentication, protocols, cipher suites, handshake timeout). (4) Low-cardinality plugin metrics exposed through Logstash's standard node stats API under this input and honoring enable_metric: requests, 429/413/415/400 refusals, item errors, queue submission failures; updated per request, never per event. Performance must not regress: SC-006 and SC-007 from feature 001 still pass with compression, TLS and metrics enabled. (5) Release packaging: Apache-2.0 LICENSE file, NOTICE that preserves the notices of all shaded dependencies (Netty and Jackson), CHANGELOG, gemspec metadata cleanup (required_ruby_version), Logstash plugin reference docs (docs/index.asciidoc), and a documented release process (version bump, tag, RubyGems publish)."
 
+## Clarifications
+
+### Session 2026-11-13
+
+- Q: Should the `logstash-input-http` baseline also run with TLS and compression in the
+  throughput comparison? → A: Yes; both plugins run with TLS and gzip-compressed requests (same
+  certificate, same bodies); this plugin also has metrics on.
+- Q: How should compression behave? → A: Match Elasticsearch: request bodies are always
+  decompressed (gzip/deflate); responses are compressed whenever the client accepts it, with no
+  size threshold, at compression level 3; `compression_enabled` (default true, like
+  Elasticsearch's `http.compression`) turns off response compression only.
+- Q: Should the `requests` counter include refused requests? → A: Yes; it counts every Bulk
+  request received, refusal counters break it down by kind, and `GET /`/`HEAD /` are not counted.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Exporter works with its default settings (Priority: P1)
@@ -33,7 +47,7 @@ against the plugin and confirm every record arrives with no exporter errors.
 5. **Given** the exporter's startup version probe on `GET /`, **When** it runs, **Then** it receives
    the documented identity response and the exporter starts without warnings about it.
 6. **Given** `compression_enabled => false`, **When** a compressed request arrives, **Then** it is
-   refused as an unsupported encoding (as in feature 001) and responses are never compressed.
+   still decompressed and ingested, and the response is not compressed.
 
 ---
 
@@ -137,16 +151,18 @@ process in a dry run.
 
 **Compression and identity (US1)**
 
-- **FR-001**: With `compression_enabled` true (the default), request bodies with
-  `Content-Encoding` `gzip` or `deflate` MUST be decompressed before parsing.
+- **FR-001**: Request bodies with `Content-Encoding` `gzip` or `deflate` (and their `x-gzip`/
+  `x-deflate` aliases) MUST always be
+  decompressed before parsing, regardless of `compression_enabled` (as Elasticsearch does).
 - **FR-002**: `max_content_length` MUST apply to the decompressed body; decompression MUST stop at
   the limit and refuse the request as too large, with nothing queued.
 - **FR-003**: Corrupt compressed data MUST be refused as a bad request; unknown encodings MUST be
   refused as unsupported; nothing from either is queued.
-- **FR-004**: With `compression_enabled` true, responses MUST be compressed when the client accepts
-  `gzip` or `deflate`, except where compression would not reduce size (small bodies).
-- **FR-005**: With `compression_enabled` false, compressed requests MUST be refused as unsupported
-  (feature 001 behavior) and responses MUST NOT be compressed.
+- **FR-004**: With `compression_enabled` true (the default), every response MUST be compressed when
+  the client accepts `gzip` or `deflate`, with no size threshold, at compression level 3 (matching
+  Elasticsearch's `http.compression` and `http.compression_level` defaults).
+- **FR-005**: With `compression_enabled` false, responses MUST NOT be compressed; request
+  decompression is unaffected.
 - **FR-006**: `GET /` and `HEAD /` MUST return a minimal identity response sufficient for the
   exporter's version detection, carrying the product header. It reports a fixed version number
   below 9.4 (`8.19.0`), so the exporter keeps its most widely compatible metrics format (9.4+
@@ -176,8 +192,11 @@ process in a dry run.
 **Metrics (US4)**
 
 - **FR-011**: The plugin MUST report, under this input in Logstash's node stats, counters for:
-  requests received, requests refused for overload, oversized body, unsupported encoding, and bad
-  request, item-level errors, and queue submission failures.
+  Bulk requests received (every request on a Bulk route, including refused ones; `GET /` and
+  `HEAD /` excluded); requests refused for overload (429), oversized body (413), unsupported
+  encoding (415), and bad request (400), each a subset of requests received; item-level errors;
+  and queue submission failures. Wrong-method requests on Bulk paths (405) are not counted.
+  Counts are visible in node stats within about 1 second.
 - **FR-012**: Counters MUST be updated per request, never per event, and MUST NOT be labeled by
   index, client, or other unbounded values.
 - **FR-013**: `enable_metric => false` MUST suppress these counters.
@@ -185,14 +204,16 @@ process in a dry run.
 **Performance (all)**
 
 - **FR-014**: With compression, TLS, and metrics enabled, feature 001's SC-006 and SC-007 MUST
-  still pass.
+  still pass. For SC-006 the `logstash-input-http` baseline runs with the same TLS certificate
+  and the same gzip-compressed bodies; this plugin also has metrics enabled.
 
 **Release packaging (US5)**
 
 - **FR-015**: The gem MUST include an Apache-2.0 license file and a notice file containing the
   notices of every bundled third-party library.
 - **FR-016**: The project MUST have a changelog with an entry for this release.
-- **FR-017**: The gemspec MUST declare the supported Ruby version and complete metadata, building
+- **FR-017**: The gemspec MUST declare the supported Ruby version, license, summary, description,
+  authors, and `logstash_plugin`/`logstash_group` metadata (homepage optional), building
   without warnings.
 - **FR-018**: User documentation MUST follow the Logstash plugin reference format and cover every
   setting, including compression, TLS, routes, metrics, and limitations.
@@ -219,16 +240,16 @@ process in a dry run.
 - **SC-004**: Every TLS setup accepted by `logstash-input-http`'s rules works here, and every
   combination it rejects is rejected here (tested setting by setting).
 - **SC-005**: Counters match the exact number of driven requests, refusals, and failures.
-- **SC-006**: Feature 001's SC-006 and SC-007 pass with compression, TLS, and metrics enabled.
+- **SC-006**: Feature 001's SC-006 (median events/s ≥ 95% of `logstash-input-http`, both with TLS
+  and gzip-compressed requests) and SC-007 (p99 < 20 ms at 1,000 items) pass with compression,
+  TLS, and metrics enabled.
 - **SC-007**: The release gem passes a license-content check (license plus all third-party
   notices present) and the release process succeeds in a dry run.
 
 ## Assumptions
 
-- Compression and TLS settings follow Logstash conventions; `compression_enabled` is the only
-  new non-TLS setting.
-- The exporter's default `filter_path` responses are small, so response compression mainly helps
-  unfiltered clients.
+- Compression behavior mirrors Elasticsearch; TLS settings mirror `logstash-input-http`;
+  `compression_enabled` is the only new non-TLS setting.
 - Plugin counters appear in Logstash's node stats and therefore in Elastic Stack Monitoring and
   common exporters without extra work.
 - Out of scope: CI, soak testing, OWASP dependency audit, Logstash 8.19.x support, and Bulk APIs

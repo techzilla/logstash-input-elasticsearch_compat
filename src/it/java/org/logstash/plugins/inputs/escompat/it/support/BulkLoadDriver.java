@@ -53,10 +53,23 @@ public final class BulkLoadDriver {
     public static Result run(final URI target, final List<byte[]> bodies, final URI statsUrl,
                              final int senders, final Duration warmup, final Duration measure)
         throws Exception {
-        final HttpClient client = HttpClient.newBuilder()
+        return run(target, bodies, false, null, statsUrl, senders, warmup, measure);
+    }
+
+    /**
+     * @param gzipped bodies are already gzip-compressed; sent with {@code Content-Encoding: gzip}
+     * @param tls     client TLS context for HTTPS targets, or {@code null}
+     */
+    public static Result run(final URI target, final List<byte[]> bodies, final boolean gzipped,
+                             final javax.net.ssl.SSLContext tls, final URI statsUrl,
+                             final int senders, final Duration warmup, final Duration measure)
+        throws Exception {
+        final HttpClient.Builder cb = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
+            .connectTimeout(Duration.ofSeconds(10));
+        if (tls != null) cb.sslContext(tls);
+        final HttpClient client = cb.build();
+        final HttpClient statsClient = HttpClient.newHttpClient();
         final AtomicBoolean stop = new AtomicBoolean();
         final AtomicLong requests = new AtomicLong();
         final Map<Integer, Long> statuses = new ConcurrentHashMap<>();
@@ -66,11 +79,12 @@ public final class BulkLoadDriver {
             final Thread t = Thread.ofPlatform().name("sender-" + s).start(() -> {
                 int i = offset;
                 while (!stop.get()) {
-                    final HttpRequest req = HttpRequest.newBuilder(target)
+                    final HttpRequest.Builder rb = HttpRequest.newBuilder(target)
                         .timeout(Duration.ofSeconds(90))
                         .header("Content-Type", "application/x-ndjson")
-                        .POST(HttpRequest.BodyPublishers.ofByteArray(bodies.get(i++ % bodies.size())))
-                        .build();
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(bodies.get(i++ % bodies.size())));
+                    if (gzipped) rb.header("Content-Encoding", "gzip");
+                    final HttpRequest req = rb.build();
                     try {
                         final HttpResponse<Void> res = client.send(req, HttpResponse.BodyHandlers.discarding());
                         statuses.merge(res.statusCode(), 1L, Long::sum);
@@ -85,11 +99,11 @@ public final class BulkLoadDriver {
             threads.add(t);
         }
         Thread.sleep(warmup.toMillis());
-        final long in0 = eventsIn(client, statsUrl);
+        final long in0 = eventsIn(statsClient, statsUrl);
         final long t0 = System.nanoTime();
         final long r0 = requests.get();
         Thread.sleep(measure.toMillis());
-        final long in1 = eventsIn(client, statsUrl);
+        final long in1 = eventsIn(statsClient, statsUrl);
         final double secs = (System.nanoTime() - t0) / 1e9;
         final long r1 = requests.get();
         stop.set(true);
@@ -97,6 +111,21 @@ public final class BulkLoadDriver {
             t.join(100_000);
         }
         return new Result((in1 - in0) / secs, r1 - r0, statuses);
+    }
+
+    /** Gzip at level 1, the exporter's {@code BestSpeed}. */
+    public static List<byte[]> gzipAll(final List<byte[]> bodies) throws IOException {
+        final List<byte[]> out = new ArrayList<>(bodies.size());
+        for (final byte[] b : bodies) {
+            final java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(b.length / 4);
+            try (java.util.zip.GZIPOutputStream z = new java.util.zip.GZIPOutputStream(bos) {
+                { def.setLevel(java.util.zip.Deflater.BEST_SPEED); }
+            }) {
+                z.write(b);
+            }
+            out.add(bos.toByteArray());
+        }
+        return out;
     }
 
     static long eventsIn(final HttpClient client, final URI statsUrl) throws Exception {
