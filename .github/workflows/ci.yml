@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Unit, Ruby and integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      # Versions match mise.toml (Logstash 9.5.6's bundled JDK and JRuby).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21.0.13"
+          cache: maven
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: jruby-10.0.7.0
+
+      - name: Install rspec
+        run: gem install rspec -v "~> 3.13" --no-document
+
+      # Unit tests, shaded JAR, gem build, then real Logstash + exporter in Docker.
+      - name: Maven verify (integration)
+        run: mvn -B -ntp verify -Pintegration
+
+      - name: Ruby specs
+        run: ruby -S rspec spec/inputs
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            target/surefire-reports/
+            target/failsafe-reports/
+          retention-days: 7

@@ -1,0 +1,79 @@
+name: Release
+
+# Push a tag "v<version>" (matching VERSION, pom.xml and a CHANGELOG section) to publish.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish gem
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: rubygems
+      url: https://rubygems.org/gems/logstash-input-elasticsearch_compat
+    permissions:
+      contents: write   # create the GitHub release
+      id-token: write   # RubyGems trusted publishing (no stored API key)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version consistency
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          file="$(tr -d '[:space:]' < VERSION)"
+          pom="$(sed -n 's:^  <version>\(.*\)</version>:\1:p' pom.xml | head -1)"
+          echo "tag=$v VERSION=$file pom=$pom"
+          [ "$v" = "$file" ] || { echo "::error::tag $v does not match VERSION $file"; exit 1; }
+          [ "$v" = "$pom" ]  || { echo "::error::tag $v does not match pom.xml $pom"; exit 1; }
+          grep -q "^## $v\$" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## $v' section"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21.0.13"
+          cache: maven
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: jruby-10.0.7.0
+
+      - name: Build gem
+        run: |
+          mvn -B -ntp package -DskipTests
+          gem build logstash-input-elasticsearch_compat.gemspec
+          ls -l logstash-input-elasticsearch_compat-${VERSION}-java.gem
+
+      - name: Check whether this version is already on RubyGems
+        id: published
+        run: |
+          code="$(curl -s -o /dev/null -w '%{http_code}' \
+            "https://rubygems.org/api/v2/rubygems/logstash-input-elasticsearch_compat/versions/${VERSION}.json?platform=java")"
+          if [ "$code" = 200 ]; then
+            echo "::notice::${VERSION} already published (e.g. by hand); skipping gem push"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: rubygems/configure-rubygems-credentials@v1
+        if: steps.published.outputs.exists != 'true'
+
+      - name: Publish to RubyGems
+        if: steps.published.outputs.exists != 'true'
+        run: gem push logstash-input-elasticsearch_compat-${VERSION}-java.gem
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v h="## ${VERSION}" '$0==h{f=1;next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" logstash-input-elasticsearch_compat-${VERSION}-java.gem \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md
