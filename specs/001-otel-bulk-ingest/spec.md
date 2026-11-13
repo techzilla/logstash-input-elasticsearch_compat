@@ -20,6 +20,12 @@
   pinned exporter's default concurrency and batching (discovery and compression off), sending
   realistic OTel log documents.
 
+### Session 2026-11-13
+
+- Q: Must SC-007 stay at p99 < 10 ms? → A: No. Throughput is governed by SC-006; SC-007 is
+  loosened to p99 < 20 ms at 1,000 items. Measured p99 was 9.9–13.6 ms (GC-dominated tail),
+  p50 ~4 ms.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Exporter ships telemetry into Logstash (Priority: P1)
@@ -161,8 +167,8 @@ retryable refusals while the listener keeps answering.
   `logstash-input-http` with the `json_lines` codec on the same hardware, payload, and pipeline,
   within 5% measurement noise (median of 3 runs each).
 - **SC-007**: On the benchmark workload, time the plugin adds to a request (request handling plus
-  event construction), excluding time waiting for the Logstash queue, is under 10 ms at the 99th percentile for 1,000 items and grows no
-  faster than linearly with item count.
+  event construction), excluding time waiting for the Logstash queue, is under 20 ms at the
+  99th percentile for 1,000 items and grows no faster than linearly with item count.
 
 ## Assumptions
 

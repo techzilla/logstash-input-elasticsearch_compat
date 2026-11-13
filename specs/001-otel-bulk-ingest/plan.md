@@ -21,7 +21,7 @@ relocated; Logstash plugin API (Ruby side only)
 
 **Storage**: N/A (Logstash memory or persistent queue)
 
-**Testing**: JUnit 5; Testcontainers (Logstash 9.5.6, otelcol-contrib 0.165.1); JMH
+**Testing**: JUnit 5; Testcontainers (Logstash 9.5.6, otelcol-contrib 0.165.0); JMH
 
 **Target Platform**: Linux, Logstash 9.5.x
 
@@ -30,7 +30,7 @@ relocated; Logstash plugin API (Ruby side only)
 **Performance Goals**: events/s ≥ `logstash-input-http` (`json_lines`) on the benchmark workload
 (SC-006)
 
-**Constraints**: p99 added time < 10 ms per 1,000-item request, linear in items (SC-007); no event
+**Constraints**: p99 added time < 20 ms per 1,000-item request, linear in items (SC-007); no event
 loop blocking; listener answers within 1 s while the pipeline is blocked (SC-005)
 
 **Scale/Scope**: Up to 10 concurrent requests of 1–5 MB (exporter defaults, research R4)

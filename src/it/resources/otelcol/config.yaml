@@ -1,0 +1,33 @@
+# otelcol-contrib 0.165.0 → elasticsearch_compat (research R1, FR-014)
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  elasticsearch:
+    endpoint: ${env:ES_ENDPOINT}
+    version_detection:
+      enabled: false
+    compression: none
+    discover:
+      on_start: false
+    # all other settings: exporter defaults (batching, retries, filter_path, mapping mode)
+
+service:
+  telemetry:
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [elasticsearch]

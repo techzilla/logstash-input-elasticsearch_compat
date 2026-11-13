@@ -25,7 +25,18 @@ not; body ends with `\n`; unknown action → request `400`.
 
 Other action-line keys (`dynamic_templates`, `require_alias`, …) are read and discarded (FR-010).
 
-`preStatus` rules: `UPDATE`/`DELETE` → `UNSUPPORTED_ACTION`; `index == null` → `MISSING_INDEX`.
+`preStatus` rules, in order: `UPDATE`/`DELETE` → `UNSUPPORTED_ACTION`; `index` null or empty →
+`MISSING_INDEX`; `@metadata` present and not an object → `INVALID_DOCUMENT`.
+
+Top-level `@timestamp` that is a JSON number or a digit string (`-?\d+(\.\d+)?`) is epoch
+milliseconds, as Elasticsearch's default date format reads it, and is converted to an ISO-8601
+string from the exact text (research R10). Out-of-range values are left unchanged.
+
+## Java ↔ Ruby handoff
+
+`BatchHandler.submit(List<Operation> submittable, ItemOutcome[] results)`: Java passes only
+submittable operations; Ruby sets `QUEUED` or `SUBMIT_FAILED`; entries left `null` become
+`NOT_ATTEMPTED`.
 
 ## Event (Ruby, built per submittable Operation)
 
@@ -41,6 +52,7 @@ Other action-line keys (`dynamic_templates`, `require_alias`, …) are read and 
 | `QUEUED` | 201 | — | — |
 | `UNSUPPORTED_ACTION` | 400 | `illegal_argument_exception` | No |
 | `MISSING_INDEX` | 400 | `action_request_validation_exception` | No |
+| `INVALID_DOCUMENT` (`@metadata` present but not an object; Logstash cannot build the event) | 400 | `document_parsing_exception` | No |
 | `SUBMIT_FAILED` (push raised; ambiguous) | 500 | `exception` | Yes (may duplicate) |
 | `NOT_ATTEMPTED` (after failure / shutdown) | 503 | `unavailable_exception` | Yes |
 

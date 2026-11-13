@@ -28,6 +28,9 @@ authentication or TLS settings in this feature.
   needed downstream.
 - Reserved fields (standard Logstash behavior):
   - Valid `@timestamp` → becomes the event timestamp.
+  - Numeric or digit-string `@timestamp` (e.g. the exporter's `"1794539402764.233216"`) → epoch
+    milliseconds, converted with nanosecond precision.
   - Invalid `@timestamp` → tag `_timestampparsefailure`, original value kept in `_@timestamp`.
   - Missing `@timestamp` → ingest time.
   - Document's own `@metadata` → kept; only the `metadata_target` subkey is overwritten.
+  - Document's `@metadata` that is not an object → item `400` `document_parsing_exception`.

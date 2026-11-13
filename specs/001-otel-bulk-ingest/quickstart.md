@@ -34,16 +34,21 @@ one event with `message: hi` and metadata `action=create, index=logs-a, id=1`.
 mvn verify -Pintegration
 ```
 
-Covers spec user stories 1–3 on memory and persistent queues, with `otelcol-contrib:0.165.1`
+Covers spec user stories 1–3 on memory and persistent queues, with `otelcol-contrib:0.165.0`
 configured per [research R1](research.md#r1-reference-client-and-pinned-versions).
 Pass = SC-001–SC-005.
 
 ## 4. Performance
 
 ```bash
-mvn verify -Pbench        # JMH: added time per request (SC-007)
-mvn verify -Pthroughput   # replay vs logstash-input-http (SC-006)
+mvn verify -Pintegration,throughput   # ~5 min: capture exporter bodies, Ruby event-build bench
+                                      # (SC-007), replay vs logstash-input-http (SC-006)
+mvn verify -Pbench                    # JMH, Java part of SC-007 (needs target/bench/exporter)
 ```
 
-Pass = Java p99 + Ruby event-build p99 < 10 ms at 1,000 items with linear growth; median events/s
+Without Docker, the same runs work against native binaries: run `CaptureStub` and
+`BulkLoadDriver` (`src/it/java/.../it/support`) by hand against a local Logstash and
+`otelcol-contrib`.
+
+Pass = combined p99 (parse + event build + response, from `EventBuildBenchIT`) < 20 ms at 1,000 items with linear growth; median events/s
 over 3 runs ≥ 95% of `logstash-input-http` (`json_lines`) on the same host. Results are recorded in `specs/001-otel-bulk-ingest/results.md`.

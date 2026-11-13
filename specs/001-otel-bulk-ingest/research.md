@@ -6,9 +6,11 @@ Sources: `opentelemetry-collector-contrib` `exporter/elasticsearchexporter` at `
 
 ## R1. Reference client and pinned versions
 
-- **Decision**: OpenTelemetry Collector contrib `v0.165.1` with the `elasticsearch` exporter,
+- **Decision**: OpenTelemetry Collector contrib `0.165.0` (the `otelcol-contrib` distribution and
+  image; contrib's `v0.165.1` source tag was never packaged) with the `elasticsearch` exporter,
   configured with `version_detection.enabled: false`, `compression: none`,
-  `discover.on_start: false`, everything else default. Logstash `9.5.6`.
+  `discover.on_start: false`, everything else default. Logstash `9.5.6` (JDK 21.0.13,
+  JRuby 10.0.7.0).
 - **Rationale**: Latest releases at planning time. These settings match FR-014.
 - **Alternatives**: EDOT Collector — deferred; same exporter code, add to the matrix later.
 
@@ -74,9 +76,13 @@ From `factory.go` defaults:
   `queue << event` per accepted item, and returns an `int[]` of outcomes.
 - **Rationale**: No per-line Ruby callback (constitution); `Event.new` accepts a Java `Map`
   directly, avoiding Ruby hash conversion.
-- **Validation task**: Confirm in Logstash 9.5.6 that `Event.new` with a Java `Map` (including
-  nested maps/lists, `Long`, `BigInteger`, `Double`) is accepted without conversion overhead;
-  fall back to a Java-side conversion helper if not.
+- **Validated (T007)** from Logstash 9.5.6 source: `RubyEvent#initialize` takes a
+  `MapJavaProxy` via `ConvertedMap.newFromMap`; `Valuefier` converts `String`, `Long`,
+  `BigInteger`, `Double`, `Boolean`, `null`, `Map`, `List` directly. No helper needed. Found: a
+  non-object `@metadata` makes the `Event` constructor throw (`ClassCastException`/NPE), so the
+  parser pre-rejects it as `INVALID_DOCUMENT` (item 400) instead of a retried 500.
+- **Signature as built**: `submit(List<Operation> submittable, ItemOutcome[] results)`; Ruby
+  never sees pre-rejected operations.
 
 ## R8. Dependency isolation
 
@@ -96,3 +102,18 @@ From `factory.go` defaults:
 - **Rationale**: One test language (Java) across tiers; Docker is available locally.
 - **Alternatives**: Ruby specs via `logstash-devutils` — needs a Logstash source checkout; the
   Ruby adapter is thin and fully exercised by integration tests.
+
+## R10. Exporter `@timestamp` format (found in end-to-end testing)
+
+- **Finding**: In the default `otel` mapping mode the exporter writes `@timestamp` as a JSON
+  string `"<epoch millis>.<nanos remainder>"` (`otelserializer/jsonwriter.go`
+  `writeTimestampField`). Elasticsearch's default `strict_date_optional_time||epoch_millis`
+  accepts it; Logstash does not, so every event was tagged `_timestampparsefailure` with ingest
+  time.
+- **Decision**: For the top-level `@timestamp` only, a JSON number or digit string is converted to
+  ISO-8601 from the exact decimal text (no floating point), matching how Elasticsearch reads it.
+  Strings that are not plain digits are left for Logstash. Out-of-range values are left unchanged.
+- **Verified**: 1,000 exporter records on the persisted queue, 0 parse failures, nanosecond-exact
+  timestamps.
+- **Note**: the exporter does not zero-pad the remainder (e.g. 5,000 ns → `".5000"`); read as a
+  decimal, as Elasticsearch does, that is 0.5 ms. This is upstream behavior, not corrected here.
